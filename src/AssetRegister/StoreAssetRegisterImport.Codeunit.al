@@ -1,40 +1,28 @@
 codeunit 60127 "Store Asset Register Import"
 {
-    // Simple, defensive CSV import: one bad row shouldn't lose the rest of the
-    // batch, so each row runs through a TryFunction and gets skipped rather than
-    // aborting the whole file. Does not support commas embedded inside quoted
-    // fields - keep the source data plain-comma-separated.
-    Permissions = tabledata "Store Asset Register" = RIM, tabledata "Store Asset Category" = RIM;
+    // Simple CSV import: a row that cannot be imported (no Description, or a Tag
+    // Number already in use) is skipped and counted, and the rest carry on. Does
+    // not support commas embedded inside quoted fields - keep the source data
+    // plain-comma-separated.
+    Permissions = tabledata "Store Asset Register" = RIM, tabledata "Store Asset Category" = RIM, tabledata "Fixed Asset" = R;
 
     procedure ImportFromCsv()
     var
         InStr: InStream;
         FileName: Text;
-    begin
-        // UploadIntoStream is a client interaction (it shows the browser file
-        // picker) and must NOT run inside a TryFunction - TryFunction's isolated
-        // execution context doesn't support that client round-trip, and the
-        // mismatch surfaces as a raw platform crash page instead of a normal,
-        // catchable AL error. The upload happens here, in the plain procedure;
-        // only the row-by-row parsing/inserting below is wrapped in a TryFunction.
-        if not UploadIntoStream(SelectFileTxt, '', 'CSV files (*.csv)|*.csv', FileName, InStr) then
-            exit;
-
-        // Wrapped so a failure shows an actual, readable reason instead of a
-        // dead-end platform error page.
-        if not TryImportFromCsv(InStr) then
-            Message(DiagnosticFailedMsg, GetLastErrorText());
-    end;
-
-    [TryFunction]
-    local procedure TryImportFromCsv(var InStr: InStream)
-    var
         Line: Text;
         LineNo: Integer;
         ImportedCount: Integer;
         SkippedCount: Integer;
         Fields: array[20] of Text[250];
     begin
+        // Plain code throughout - no TryFunction. The rows are saved to the
+        // database, and this server refuses to save inside a try function (the
+        // page then shows "Something went wrong"). Each row is checked first
+        // instead, and a row that cannot be imported is skipped and counted.
+        if not UploadIntoStream(SelectFileTxt, '', 'CSV files (*.csv)|*.csv', FileName, InStr) then
+            exit;
+
         while not InStr.EOS do begin
             InStr.ReadText(Line);
             LineNo += 1;
@@ -45,14 +33,36 @@ codeunit 60127 "Store Asset Register Import"
                 Clear(Fields);
                 SplitCsvLine(Line, Fields);
 
-                if TryInsertRegisterRow(Fields) then
-                    ImportedCount += 1
-                else
+                if RowCanBeImported(Fields) then begin
+                    InsertRegisterRow(Fields);
+                    ImportedCount += 1;
+                end else
                     SkippedCount += 1;
             end;
         end;
 
         Message(ImportResultMsg, ImportedCount, SkippedCount);
+    end;
+
+    // A row is skipped if it has no Description, or its Tag Number is already
+    // used - on another register row (including one imported earlier in this
+    // same file) or on a Fixed Asset.
+    local procedure RowCanBeImported(var Fields: array[20] of Text[250]): Boolean
+    var
+        AssetRegister: Record "Store Asset Register";
+        FixedAsset: Record "Fixed Asset";
+        TagNo: Code[30];
+    begin
+        if DelChr(Fields[2], '<>', ' ') = '' then
+            exit(false);
+        if Fields[6] = '' then
+            exit(true);
+        TagNo := CopyStr(Fields[6], 1, MaxStrLen(TagNo));
+        AssetRegister.SetRange("Tag No.", TagNo);
+        if not AssetRegister.IsEmpty() then
+            exit(false);
+        FixedAsset.SetRange("Tag No.", TagNo);
+        exit(FixedAsset.IsEmpty());
     end;
 
     local procedure SplitCsvLine(Line: Text; var Fields: array[20] of Text[250])
@@ -72,8 +82,7 @@ codeunit 60127 "Store Asset Register Import"
         Fields[i] := CopyStr(DelChr(Remaining, '<>', ' "'), 1, 250);
     end;
 
-    [TryFunction]
-    local procedure TryInsertRegisterRow(var Fields: array[20] of Text[250])
+    local procedure InsertRegisterRow(var Fields: array[20] of Text[250])
     var
         AssetRegister: Record "Store Asset Register";
         Qty: Decimal;
@@ -83,7 +92,6 @@ codeunit 60127 "Store Asset Register Import"
         if Fields[1] <> '' then
             AssetRegister.Category := CopyStr(EnsureCategoryExists(Fields[1]), 1, MaxStrLen(AssetRegister.Category));
         AssetRegister.Description := CopyStr(Fields[2], 1, MaxStrLen(AssetRegister.Description));
-        AssetRegister.TestField(Description);
         AssetRegister."Location Code" := CopyStr(Fields[3], 1, MaxStrLen(AssetRegister."Location Code"));
         AssetRegister."Zone Code" := CopyStr(Fields[4], 1, MaxStrLen(AssetRegister."Zone Code"));
         AssetRegister."Shelf No." := CopyStr(Fields[5], 1, MaxStrLen(AssetRegister."Shelf No."));
@@ -98,10 +106,7 @@ codeunit 60127 "Store Asset Register Import"
         AssetRegister.Status := ParseCondition(Fields[13]);
         AssetRegister.Remarks := CopyStr(Fields[14], 1, MaxStrLen(AssetRegister.Remarks));
 
-        // Validate Tag No. before inserting - if it's a duplicate, this raises
-        // an error and the row is skipped cleanly with nothing left behind. Doing
-        // the uniqueness check after Insert would leave an orphaned tagless row
-        // in the table even though the import reports it as "skipped".
+        // The Tag Number was already checked for duplicates in RowCanBeImported.
         if Fields[6] <> '' then
             AssetRegister.Validate("Tag No.", CopyStr(Fields[6], 1, MaxStrLen(AssetRegister."Tag No.")));
         AssetRegister.Insert(true);
@@ -148,5 +153,4 @@ codeunit 60127 "Store Asset Register Import"
     var
         SelectFileTxt: Label 'Select the CSV file to import';
         ImportResultMsg: Label '%1 rows imported, %2 skipped. Skipped rows are usually missing a Description, or have a Tag Number already used elsewhere.', Comment = '%1 = imported count, %2 = skipped count';
-        DiagnosticFailedMsg: Label 'Import failed: %1', Comment = '%1 = the underlying error text';
 }

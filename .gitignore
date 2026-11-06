@@ -1,0 +1,23 @@
+# --- Third-party packages and build output (not ours to publish) ---
+# Downloaded symbol packages: Fanisi (licensed, contains their source) and Microsoft
+.alpackages/
+# Built apps
+.tmp_build/
+*.app
+
+# --- Machine / server specific ---
+# launch.json holds internal server addresses
+.vscode/launch.json
+.vscode/.alcache/
+.altestrunner/
+.snapshots/
+# Local Claude Code settings
+.claude/
+
+# --- Internal business data (asset and inventory lists) ---
+*.xlsx
+*.csv
+
+# --- Backups and Office temp files ---
+*(backup *
+~$*
