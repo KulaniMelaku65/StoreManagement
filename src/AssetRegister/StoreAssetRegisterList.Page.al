@@ -174,6 +174,38 @@ page 60126 "Store Asset Register List"
                     CurrPage.Update(false);
                 end;
             }
+            action(LinkAssignedToEmployees)
+            {
+                ApplicationArea = All;
+                Caption = 'Link Assigned To Employees';
+                Image = LinkAccount;
+                Promoted = true;
+                PromotedCategory = Process;
+                ToolTip = 'For assets employees already held before go-live: matches each Assigned To name to an Employee card and records the asset as issued to that employee, so it can later be returned or transferred. Rows that cannot be matched are left for you to correct, and the list is filtered to show them.';
+
+                trigger OnAction()
+                var
+                    StoreAssetCustodyLinkMgt: Codeunit "Store Asset Custody Link Mgt.";
+                    UnmatchedCount: Integer;
+                begin
+                    StoreAssetCustodyLinkMgt.LinkAssignedAssets(UnmatchedCount);
+                    if UnmatchedCount > 0 then begin
+                        Rec.SetRange("Availability Status", Rec."Availability Status"::Available);
+                        Rec.SetFilter("Assigned To", '<>%1', '');
+                    end;
+                    CurrPage.Update(false);
+                end;
+            }
+            action(ReviewNameMatches)
+            {
+                ApplicationArea = All;
+                Caption = 'Review Name Matches';
+                Image = MapAccounts;
+                Promoted = true;
+                PromotedCategory = Process;
+                ToolTip = 'For Assigned To names that did not match an employee exactly (spelling mistakes, missing names, titles): see the closest employee for each, correct or accept it, and link the accepted ones.';
+                RunObject = page "Store Assignee Matching";
+            }
             action(MarkCounted)
             {
                 ApplicationArea = All;
